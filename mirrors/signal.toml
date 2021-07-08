@@ -1,0 +1,3 @@
+[[mirrors]]
+exec = "rsync rsync://v-signal.xyz::/ $PUBLIC_PATH"
+period = 3.0

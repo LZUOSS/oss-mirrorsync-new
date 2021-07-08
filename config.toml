@@ -1,0 +1,4 @@
+[base]
+public_path = "./public"
+log_path = "./log"
+mirrors_path = "./mirrors"
