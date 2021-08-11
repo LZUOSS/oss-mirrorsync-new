@@ -3,22 +3,27 @@ package scheduler
 import (
   "ChimataMS/worker"
   "github.com/robfig/cron"
+  "log"
   "os"
   "path/filepath"
 )
 
-type MirrorStruct struct {
-  Config worker.MirrorConfigStruct
+type mirrorStruct struct {
+  Config *worker.MirrorConfigStruct
   Channel chan int
   SyncStatus string
   LastSyncTime string
 }
 
-func (*MirrorStruct) Run() {
+var (
+  mirrorMap map[string]*mirrorStruct
+)
+
+func (*mirrorStruct) Run() {
 
 }
 
-func (*MirrorStruct) UpdateRecord() {
+func (*mirrorStruct) UpdateRecord() {
 
 }
 
@@ -30,6 +35,14 @@ func InitScheduler() {
   mirrorCron = cron.New()
   worker.ConfigMutex.RLock()
    for _, mirror := range worker.Config.Mirrors {
-
+     curMirror := new(mirrorStruct)
+     curMirror.Config = mirror
+     err := mirrorCron.AddJob(mirror.Period, curMirror)
+     if err != nil {
+       log.Println("Cron can't load mirror " + mirror.Name + ".")
+       continue
+     }
+     mirrorMap[mirror.Name] = curMirror
    }
+   worker.ConfigMutex.RUnlock()
 }
