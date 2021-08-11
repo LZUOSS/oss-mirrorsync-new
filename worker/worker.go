@@ -11,17 +11,19 @@ import (
 )
 
 type MirrorConfigStruct struct {
+  Name        string `toml:name`
   PrepareExec string `toml:prepare_exec,multiline:"true"`
   Exec        string `toml:exec,multiline:"true"`
   SuccessExec string `toml:success_exec,multiline:"true"`
   FailExec    string `toml:fail_exec,multiline:"true"`
-  Period      float64
+  Period      string `toml:period`
 }
 
 type BaseConfigStruct struct {
-  PublicPath  string `toml:"public_path"`
-  LogPath     string `toml:"log_path"`
-  MirrorsPath string `toml:"mirrors_path"`
+  PublicPath  string             `toml:"public_path"`
+  LogPath     string             `toml:"log_path"`
+  MirrorConfigPath string        `toml:"mirror_config_path"`
+  RecordPath string              `toml:"record_path"`
 }
 
 type ConfigStruct struct {
@@ -30,7 +32,7 @@ type ConfigStruct struct {
 }
 
 var (
-  ConfigMutex sync.Mutex
+  ConfigMutex sync.RWMutex
   Config      *ConfigStruct
 )
 
@@ -42,8 +44,6 @@ func LoadConfig() {
   baseConfigContent, err := ioutil.ReadFile("./config.toml")
   if err != nil {
     if errors.Is(err, os.ErrNotExist) {
-      log.Println("./config.toml not found.")
-      log.Println("Trying /etc/Chimata/config.toml...")
       baseConfigContent, err = ioutil.ReadFile("/etc/Chimata/config.toml")
       if err != nil {
         log.Fatal(err)
@@ -58,14 +58,14 @@ func LoadConfig() {
     log.Fatal(err)
   }
   log.Println("Loading mirrors...")
-  mirrorsConfigFile, err := ioutil.ReadDir(Config.Base.MirrorsPath)
+  mirrorsConfigFile, err := ioutil.ReadDir(Config.Base.MirrorConfigPath)
   if err != nil {
     log.Fatal(err)
   }
   for _, oneMirrorConfigFile := range mirrorsConfigFile {
     if len(oneMirrorConfigFile.Name()) > 5 && oneMirrorConfigFile.Name()[len(oneMirrorConfigFile.Name()) - 5 :] == ".toml" {
       log.Println("Loading " + oneMirrorConfigFile.Name() + "...")
-      oneMirrorConfigContent, err := ioutil.ReadFile(filepath.Join(Config.Base.MirrorsPath, oneMirrorConfigFile.Name()))
+      oneMirrorConfigContent, err := ioutil.ReadFile(filepath.Join(Config.Base.MirrorConfigPath, oneMirrorConfigFile.Name()))
       if err != nil {
         log.Fatal(err)
       }

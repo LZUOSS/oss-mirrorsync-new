@@ -1,3 +1,4 @@
 [[mirrors]]
+name = "signal"
 exec = "rsync rsync://v-signal.xyz::/ $PUBLIC_PATH"
-period = 3.0
+period = "@every 3h"

@@ -1,4 +1,5 @@
 [base]
-public_path = "./public"
+public_path = "./"
 log_path = "./log"
-mirrors_path = "./mirrors"
+mirror_config_path = "./mirrors"
+record_path = "./record"
