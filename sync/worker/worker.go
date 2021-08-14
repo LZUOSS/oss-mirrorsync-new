@@ -8,6 +8,7 @@ import (
   "os"
   "path/filepath"
   "sync"
+  "time"
 )
 
 type MirrorConfigStruct struct {
@@ -35,6 +36,7 @@ type ConfigStruct struct {
 var (
   ConfigMutex sync.RWMutex
   Config      *ConfigStruct
+  LogFile     *os.File
 )
 
 func checkConfig() bool{
@@ -66,6 +68,17 @@ func checkConfig() bool{
     return false
   }
   return true
+}
+
+func initLogger() {
+  var err error
+  LogFile, err = os.Create(filepath.Join(Config.Base.LogPath, time.Now().Local().Format("20060102") + ".log"))
+  if err != nil {
+    log.Println(err)
+  } else {
+    log.SetOutput(LogFile)
+  }
+
 }
 
 func LoadConfig() {
@@ -111,5 +124,6 @@ func LoadConfig() {
       }
     }
   }
+  initLogger()
   ConfigMutex.Unlock()
 }
