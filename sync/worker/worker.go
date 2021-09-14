@@ -12,12 +12,12 @@ import (
 )
 
 type MirrorConfigStruct struct {
-	Name        string `toml:name`
-	InitExec    string `toml:init_exec,multiline:"true"`
-	Exec        string `toml:exec,multiline:"true"`
-	SuccessExec string `toml:success_exec,multiline:"true"`
-	FailExec    string `toml:fail_exec,multiline:"true"`
-	Period      string `toml:period`
+	Name        string `toml:"name"`
+	InitExec    string `toml:"init_exec" multiline:"true"`
+	Exec        string `toml:"exec" multiline:"true"`
+	SuccessExec string `toml:"success_exec" multiline:"true"`
+	FailExec    string `toml:"fail_exec" multiline:"true"`
+	Period      string `toml:"period"`
 }
 
 type BaseConfigStruct struct {
