@@ -34,13 +34,13 @@ var (
 	mirrorCron *cron.Cron
 )
 
-func InitScheduler() {
+func InitScheduler(quitNotify chan int) {
 	log.Println("Init scheduler...")
 	mirrorCron = cron.New()
 	worker.ConfigMutex.RLock()
 	for _, mirror := range worker.Config.Mirrors {
 		mirror := mirror
-		go func() {
+		go func(quitNotify chan int) {
 			curMirror := new(mirrorStruct)
 			curMirror.Config = mirror
 			init := exec.Command(worker.Config.Base.Shell, "-c \""+mirror.InitExec+"\"")
@@ -48,19 +48,32 @@ func InitScheduler() {
 			init.Dir = worker.Config.Base.PublicPath
 			init.Stdout = worker.LogFile
 			init.Stderr = worker.LogFile
-			err := init.Run()
+			err := init.Start()
 			if err != nil {
-				log.Println("Init failed")
+				log.Println("Init cannot start.")
+			}
+			for !init.ProcessState.Exited() {
+				select {
+				case <-quitNotify:
+					{
+						_ = init.Process.Kill()
+						return
+					}
+				}
+			}
+			if !init.ProcessState.Success() {
+				log.Println("Init failed.")
 			} else {
 				err = mirrorCron.AddJob(mirror.Period, curMirror)
 				if err != nil {
-					log.Println("Cron can't load mirror " + mirror.Name + ".")
+					log.Println("Cron can't add mirror " + mirror.Name + ".")
 					return
 				}
 				mirrorMap[mirror.Name] = curMirror
 			}
-		}()
+		}(quitNotify)
 	}
+
 	mirrorCron.AddFunc("@daily", func() {
 		worker.ConfigMutex.RLock()
 		err := worker.LogFile.Close()
@@ -74,6 +87,7 @@ func InitScheduler() {
 			worker.ConfigMutex.RUnlock()
 		}
 	})
+
 	worker.ConfigMutex.RUnlock()
 	mirrorCron.Run()
 }

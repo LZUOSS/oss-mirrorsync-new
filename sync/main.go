@@ -1,26 +1,28 @@
 package main
 
 import (
-  "ChimataMS/scheduler"
-  "ChimataMS/worker"
-  "os"
-  "os/signal"
-  "syscall"
+	"ChimataMS/scheduler"
+	"ChimataMS/worker"
+	"os"
+	"os/signal"
+	"syscall"
 )
 
 func main() {
-  worker.LoadConfig()
-  scheduler.InitScheduler()
-  for {
-    c := make(chan os.Signal)
-    signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
-    select {
-      case <- c : {
-        worker.LogFile.Close()
-        os.Exit(0)
-      }
-    default:
+	progQuit := make(chan os.Signal)
+	quitNotify := make(chan int)
+	worker.LoadConfig()
+	scheduler.InitScheduler(quitNotify)
+	for {
+		signal.Notify(progQuit, syscall.SIGINT, syscall.SIGTERM)
+		select {
+		case <-progQuit:
+			{
+				worker.LogFile.Close()
+				os.Exit(0)
+			}
+		default:
 
-    }
-  }
+		}
+	}
 }
