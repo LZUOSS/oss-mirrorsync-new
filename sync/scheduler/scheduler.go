@@ -47,34 +47,38 @@ func InitScheduler(quitNotify chan int) {
 		go func(quitNotify chan int) {
 			curMirror := new(mirrorSchedulerStruct)
 			curMirror.Config = mirror
-			init := exec.Command(worker.Config.Base.Shell, "-c \""+mirror.InitExec+"\"")
-			init.Env = append(init.Env, "PUBLIC_PATH="+filepath.Join(worker.Config.Base.PublicPath, mirror.Name))
-			init.Dir = worker.Config.Base.PublicPath
-			init.Stdout = worker.LogFile
-			init.Stderr = worker.LogFile
-			err := init.Start()
-			if err != nil {
-				log.Println("Init cannot start.")
-			}
-			for !init.ProcessState.Exited() {
-				select {
-				case <-quitNotify:
-					{
-						_ = init.Process.Kill()
-						return
+			if mirror.InitExec != "" {
+				init := exec.Command(worker.Config.Base.Shell, "-c \""+mirror.InitExec+"\"")
+				init.Env = append(init.Env, "PUBLIC_PATH="+filepath.Join(worker.Config.Base.PublicPath, mirror.Name))
+				init.Dir = worker.Config.Base.PublicPath
+				init.Stdout = worker.LogFile
+				init.Stderr = worker.LogFile
+				err := init.Start()
+				if err != nil {
+					log.Println("Init cannot start.")
+				}
+				for !init.ProcessState.Exited() {
+					select {
+					case <-quitNotify:
+						{
+							_ = init.Process.Kill()
+							return
+						}
 					}
 				}
-			}
-			if !init.ProcessState.Success() {
-				log.Println("Init failed.")
-			} else {
-				err = mirrorScheduler.AddJob(mirror.Period, curMirror)
-				if err != nil {
-					log.Println("Cron can't add mirror " + mirror.Name + ".")
+				if !init.ProcessState.Success() {
+					log.Println("Init failed.")
 					return
 				}
-				mirrorSchedulerMap[mirror.Name] = curMirror
 			}
+
+			err = mirrorScheduler.AddJob(mirror.Period, curMirror)
+			if err != nil {
+				log.Println("Cron can't add mirror " + mirror.Name + ".")
+				return
+			}
+			mirrorSchedulerMap[mirror.Name] = curMirror
+
 		}(quitNotify)
 	}
 
