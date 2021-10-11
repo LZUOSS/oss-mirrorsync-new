@@ -2,3 +2,5 @@
 sync/log
 sync/public
 sync/record
+.kdev4/
+*.kdev4

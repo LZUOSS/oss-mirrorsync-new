@@ -48,7 +48,7 @@ func InitScheduler(quitNotify chan int) {
 			curMirror := new(mirrorSchedulerStruct)
 			curMirror.Config = mirror
 			if mirror.InitExec != "" {
-				init := exec.Command(worker.Config.Base.Shell, "-c \""+mirror.InitExec+"\"")
+				init := exec.Command(worker.Config.Base.Shell, "-c", "\"" + mirror.InitExec + "\"")
 				init.Env = append(init.Env, "PUBLIC_PATH="+filepath.Join(worker.Config.Base.PublicPath, mirror.Name))
 				init.Dir = worker.Config.Base.PublicPath
 				init.Stdout = worker.LogFile
@@ -72,7 +72,7 @@ func InitScheduler(quitNotify chan int) {
 				}
 			}
 
-			err = mirrorScheduler.AddJob(mirror.Period, curMirror)
+			err := mirrorScheduler.AddJob(mirror.Period, curMirror)
 			if err != nil {
 				log.Println("Cron can't add mirror " + mirror.Name + ".")
 				return
