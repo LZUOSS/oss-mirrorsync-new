@@ -2,4 +2,3 @@
 public_path = "./"
 mirror_config_path = "./mirrors"
 record_path = "./record"
-shell = "bash"
