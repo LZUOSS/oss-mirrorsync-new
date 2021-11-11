@@ -1,16 +1,14 @@
 /*
-Copyright (c) [2021] [LZUOSS]
-[ChimataMS] is licensed under Mulan PSL v2.
-You can use this software according to the terms and conditions of the Mulan PSL v2.
-You may obtain a copy of Mulan PSL v2 at:
-         http://license.coscl.org.cn/MulanPSL2
-THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
-EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
-MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
-See the Mulan PSL v2 for more details.
-Mulan Permissive Software License，Version 2
-Mulan Permissive Software License，Version 2 (Mulan PSL v2)
-*/
+ * Copyright (c) 2021 LZUOSS
+ * ChimataMS is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at:
+ *  	http://license.coscl.org.cn/MulanPSL2
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ */
 package scheduler
 
 import (
@@ -37,9 +35,24 @@ var (
 	mirrorSchedulerMap = make(map[string]*mirrorSchedulerStruct)
 )
 
+func handleScript(file *os.File) {
+	err := file.Close()
+	if err != nil {
+		log.Println("File " + file.Name() + " can't be closed")
+	}
+	err = os.Remove(file.Name())
+	if err != nil {
+		log.Println("File " + file.Name() + " can't be removed")
+	}
+}
+
 //Run interface
 func (mirror *mirrorSchedulerStruct) Run() {
 	runScript, err := os.CreateTemp("", "*")
+	if err != nil {
+		log.Println("Can't create script")
+		return
+	}
 	fmt.Fprintln(runScript, "#!/bin/sh")
 	fmt.Fprintln(runScript, mirror.Config.Exec)
 	process := exec.Command("sh", runScript.Name())
@@ -49,7 +62,21 @@ func (mirror *mirrorSchedulerStruct) Run() {
 	process.Dir = worker.Config.Base.PublicPath
 	err = process.Start()
 	for !process.ProcessState.Exited() {
-
+		select {
+			case <-mirror.quitNotify:
+			{
+				err = process.Process.Kill()
+				if err != nil {
+					log.Println("Process " + mirror.Config.Name + " can't be stopped")
+				}
+				handleScript(runScript)
+				return
+			}
+		}
+	}
+	if !process.ProcessState.Success() {
+		log.Println("Mirror" + mirror.Config.Name + "failed.")
+		return
 	}
 }
 
@@ -68,11 +95,20 @@ func InitScheduler(quitNotify chan int) {
 		go func(quitNotify chan int) {
 			curMirror := new(mirrorSchedulerStruct)
 			curMirror.Config = mirror
+
 			if mirror.InitExec != "" {
-				init := exec.Command("sh")
-				init.Env = append(init.Env, "PUBLIC_PATH="+filepath.Join(worker.Config.Base.PublicPath, mirror.Name))
-				init.Dir = worker.Config.Base.PublicPath
-				err := init.Start()
+				runScript, err := os.CreateTemp("", "*")
+				if err != nil {
+					log.Println("Can't create script")
+					return
+				}
+				fmt.Fprintln(runScript, "#!/bin/sh")
+				fmt.Fprintln(runScript, mirror.InitExec)
+				init := exec.Command("sh", runScript.Name())
+				workDir := filepath.Join(worker.Config.Base.PublicPath, mirror.Name)
+				init.Env = append(init.Env, "PUBLIC_PATH="+workDir))
+				init.Dir = workDir
+				err = init.Start()
 				if err != nil {
 					log.Println("Init cannot start.")
 				}
