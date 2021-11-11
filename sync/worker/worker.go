@@ -8,9 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"time"
 )
 
+//Basic config for every mirror task
 type MirrorConfigStruct struct {
 	Name        string `toml:"name"`
 	InitExec    string `toml:"init_exec" multiline:"true"`
@@ -20,29 +20,28 @@ type MirrorConfigStruct struct {
 	Period      string `toml:"period"`
 }
 
+//Basic config for the whole program
 type BaseConfigStruct struct {
 	PublicPath       string `toml:"public_path"`
 	LogPath          string `toml:"log_path"`
 	MirrorConfigPath string `toml:"mirror_config_path"`
 	RecordPath       string `toml:"record_path"`
-	Shell            string `toml:"shell"`
 }
 
+//Config include the two above
 type ConfigStruct struct {
 	Base    *BaseConfigStruct     `toml:"base"`
 	Mirrors []*MirrorConfigStruct `toml:"mirrors"`
 }
 
+//Config Mutex and config Struct
 var (
 	ConfigMutex sync.RWMutex
 	Config      *ConfigStruct
-	LogFile     *os.File
 )
 
+//Check if the paths are effective and translate them to absolute path
 func checkConfig() bool {
-	if Config.Base.Shell == "" {
-		Config.Base.Shell = "bash"
-	}
 	var err error
 	Config.Base.PublicPath, err = filepath.Abs(Config.Base.PublicPath)
 	if err != nil {
@@ -70,17 +69,7 @@ func checkConfig() bool {
 	return true
 }
 
-func initLogger() {
-	var err error
-	LogFile, err = os.Create(filepath.Join(Config.Base.LogPath, time.Now().Local().Format("20060102")+".log"))
-	if err != nil {
-		log.Println(err)
-	} else {
-		log.SetOutput(LogFile)
-	}
-
-}
-
+//Load config from toml files
 func LoadConfig() {
 	ConfigMutex.Lock()
 	log.Println("Initializing...")
@@ -124,6 +113,5 @@ func LoadConfig() {
 			}
 		}
 	}
-	initLogger()
 	ConfigMutex.Unlock()
 }

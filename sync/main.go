@@ -18,7 +18,6 @@ func main() {
 		select {
 		case <-progQuit:
 			{
-				worker.LogFile.Close()
 				os.Exit(0)
 			}
 		default:
