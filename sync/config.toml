@@ -1,6 +1,5 @@
 [base]
 public_path = "./"
-log_path = "./log"
 mirror_config_path = "./mirrors"
 record_path = "./record"
 shell = "bash"

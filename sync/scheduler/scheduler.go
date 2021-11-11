@@ -34,9 +34,9 @@ func (mirror *mirrorSchedulerStruct) Run() {
 	workDir := filepath.Join(worker.Config.Base.PublicPath, mirror.Config.Name)
 	process.Env = append(process.Env, "PUBLIC_PATH="+workDir)
 	process.Dir = worker.Config.Base.PublicPath
-	err = process.Run()
-	if err != nil {
-		log.Println("Cron can't execute mirror " + mirror.Config.Name + ".")
+	err = process.Start()
+	for !process.ProcessState.Exited() {
+
 	}
 }
 
@@ -48,8 +48,8 @@ var (
 //Initialize the scheduler
 func InitScheduler(quitNotify chan int) {
 	log.Println("Init scheduler...")
-	mirrorScheduler = cron.New()
 	worker.ConfigMutex.RLock()
+	mirrorScheduler = cron.New()
 	for _, mirror := range worker.Config.Mirrors {
 		mirror := mirror
 		go func(quitNotify chan int) {

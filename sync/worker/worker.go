@@ -56,11 +56,6 @@ func checkConfig() bool {
 		log.Println("The mirror config path is not valid.")
 		return false
 	}
-	Config.Base.LogPath, err = filepath.Abs(Config.Base.LogPath)
-	if err != nil {
-		log.Println("The log path is not valid.")
-		return false
-	}
 	Config.Base.RecordPath, err = filepath.Abs(Config.Base.RecordPath)
 	if err != nil {
 		log.Println("The record path is not valid.")
@@ -78,7 +73,7 @@ func LoadConfig() {
 	baseConfigContent, err := ioutil.ReadFile("./config.toml")
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			baseConfigContent, err = ioutil.ReadFile("/etc/Chimata/config.toml")
+			baseConfigContent, err = ioutil.ReadFile("/etc/chimata/config.toml")
 			if err != nil {
 				log.Fatal(err)
 			}
