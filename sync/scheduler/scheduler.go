@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"fmt"
 	"path/filepath"
+	"io"
 )
 
 //Task that includes config and sync infomation
@@ -38,11 +39,11 @@ var (
 func handleScript(file *os.File) {
 	err := file.Close()
 	if err != nil {
-		log.Println("File " + file.Name() + " can't be closed")
+		log.Println("File " + file.Name() + " can't be closed: " + err.Error())
 	}
 	err = os.Remove(file.Name())
 	if err != nil {
-		log.Println("File " + file.Name() + " can't be removed")
+		log.Println("File " + file.Name() + " can't be removed " + err.Error())
 	}
 }
 
@@ -58,10 +59,26 @@ func (mirror *mirrorSchedulerStruct) Run() {
 	process := exec.Command("sh", runScript.Name())
 
 	workDir := filepath.Join(worker.Config.Base.PublicPath, mirror.Config.Name)
+	_, err = os.Stat(workDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			err := os.Mkdir(workDir, 0755)
+			if err != nil {
+				log.Println("Can't make directory for" + mirror.Config.Name + ": " + err.Error())
+			}
+		} else {
+			log.Println("Invalid directory for " + mirror.Config.Name + ": " + err.Error())
+		}
+	}
+
+	var inOut io.ReadWriter
 	process.Env = append(process.Env, "PUBLIC_PATH="+workDir)
-	process.Dir = worker.Config.Base.PublicPath
-	err = process.Start()
-	for !process.ProcessState.Exited() {
+	process.Dir = workDir
+	process.Stdout = inOut
+	process.Stderr = inOut
+	process.Start()
+
+	for process.Process == nil {
 		select {
 			case <-mirror.quitNotify:
 			{
@@ -72,12 +89,18 @@ func (mirror *mirrorSchedulerStruct) Run() {
 				handleScript(runScript)
 				return
 			}
+			default:
 		}
 	}
-	if !process.ProcessState.Success() {
-		log.Println("Mirror" + mirror.Config.Name + "failed.")
+
+	state, _ := process.Process.Wait()
+	if !state.Success() {
+		log.Println("Mirror " + mirror.Config.Name + " failed:")
+		io.Copy(os.Stderr, inOut)
+		handleScript(runScript)
 		return
 	}
+	handleScript(runScript)
 }
 
 //Crontab
@@ -106,8 +129,10 @@ func InitScheduler(quitNotify chan int) {
 				fmt.Fprintln(runScript, mirror.InitExec)
 				init := exec.Command("sh", runScript.Name())
 				workDir := filepath.Join(worker.Config.Base.PublicPath, mirror.Name)
-				init.Env = append(init.Env, "PUBLIC_PATH="+workDir))
+				init.Env = append(init.Env, "PUBLIC_PATH="+workDir)
 				init.Dir = workDir
+				init.Stdout = os.Stdout
+				init.Stderr = os.Stderr
 				err = init.Start()
 				if err != nil {
 					log.Println("Init cannot start.")
@@ -117,19 +142,22 @@ func InitScheduler(quitNotify chan int) {
 					case <-quitNotify:
 						{
 							_ = init.Process.Kill()
+							handleScript(runScript)
 							return
 						}
 					}
 				}
 				if !init.ProcessState.Success() {
 					log.Println("Init failed.")
+					handleScript(runScript)
 					return
 				}
+				handleScript(runScript)
 			}
 
 			err := mirrorScheduler.AddJob(mirror.Period, curMirror)
 			if err != nil {
-				log.Println("Cron can't add mirror " + mirror.Name + ".")
+				log.Println("Cron can't add mirror " + mirror.Name + ": " + err.Error())
 				return
 			}
 			mirrorSchedulerMap[mirror.Name] = curMirror
