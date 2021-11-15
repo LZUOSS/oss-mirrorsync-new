@@ -13,15 +13,15 @@ package scheduler
 
 import (
 	"ChimataMS/worker"
+	"sync"
 	"github.com/robfig/cron"
 	"log"
 	"os"
 	"os/exec"
 	"fmt"
 	"path/filepath"
-	"sync"
-	"time"
 	"context"
+	"errors"
 )
 
 const (
@@ -34,8 +34,8 @@ const (
 //Task that includes config and sync infomation
 type mirrorSchedulerStruct struct {
 	Config       	*worker.MirrorConfigStruct
-	SyncStatus   	chan int
-	ctx				*context.Context
+	quitNotify		chan os.Signal
+	SyncStatus   	int
 	LastSyncTime	string
 	syncMutex		sync.Mutex
 }
@@ -56,11 +56,13 @@ func handleScript(file *os.File) {
 	}
 }
 
-func runScript(scriptContent string, workDir string, err *error, ctx context.Context, status chan int) {
+func runScript(ctx context.Context, scriptContent string, workDir string, err *error, status chan int) {
 	var scriptFile *os.File
 	scriptFile, *err = os.CreateTemp("", "*")
 	if *err != nil {
 		status <- syncFailed
+		err2 := scriptFile.Close()
+		*err = errors.New((*err).Error() + "\n" + err2.Error())
 		return
 	}
 	defer handleScript(scriptFile)
@@ -76,19 +78,55 @@ func runScript(scriptContent string, workDir string, err *error, ctx context.Con
 	*err = cmd.Run()
 	select {
 		case <- ctx.Done(): {
-
+			return
+		}
+		default: {
+			if *err != nil {
+				status <- syncFailed
+				return
+			}
+			if cmd.ProcessState.Success() {
+				status <- syncSuccess
+			} else {
+				status <- syncFailed
+			}
 		}
 	}
+}
 
+func runHookScript(ctx context.Context, scriptContent string, workDir string, err *error) {
+	var scriptFile *os.File
+	scriptFile, *err = os.CreateTemp("", "*")
 	if *err != nil {
-		status <- syncFailed
 		return
 	}
-	if cmd.ProcessState.Success() {
-		status <- syncSuccess
-	} else {
-		status <- syncFailed
+	defer handleScript(scriptFile)
+	fmt.Fprintln(scriptFile, "#!/bin/sh")
+	fmt.Fprintln(scriptFile, scriptContent)
+	cmd := exec.CommandContext(ctx, "sh", scriptFile.Name())
+
+	cmd.Env = append(cmd.Env, "PUBLIC_PATH="+workDir)
+	cmd.Dir = workDir
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	*err = cmd.Run()
+}
+
+func mkdir(mirror *mirrorSchedulerStruct) (string, error) {
+	workDir := filepath.Join(worker.Config.Base.PublicPath, mirror.Config.Name)
+	dir, err := os.Stat(workDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			err := os.Mkdir(workDir, 0755)
+			if err != nil {
+				return workDir, err
+			}
+		} else if !dir.IsDir() {
+			return workDir, err
+		}
 	}
+	return workDir, nil
 }
 
 //Run interface
@@ -96,34 +134,41 @@ func (mirror *mirrorSchedulerStruct) Run() {
 	mirror.syncMutex.Lock()
 	log.Println("Start sync mirror " + mirror.Config.Name + "...")
 
-	workDir := filepath.Join(worker.Config.Base.PublicPath, mirror.Config.Name)
-	dir, err := os.Stat(workDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			err := os.Mkdir(workDir, 0755)
-			if err != nil {
-				log.Println("Can't make directory for" + mirror.Config.Name + ": " + err.Error())
-				return
-			}
-		} else if !dir.IsDir() {
-			log.Println("Invalid directory for " + mirror.Config.Name + ": " + err.Error())
-			return
-		}
-	}
-
-	var cmd **exec.Cmd
+	workDir, err := mkdir(mirror)
 	ctx, ctxCancel := context.WithCancel(context.Background())
-	go runScript(mirror.Config.Exec, workDir, &err, ctx, mirror.SyncStatus)
+
+	retStatus := make(chan int)
+	go runScript(ctx, mirror.Config.Exec, workDir, &err, retStatus)
+
 	select {
 		case <- mirror.quitNotify: {
-
+			ctxCancel()
+			log.Println("Stopping mirror " + mirror.Config.Name + " sync...")
+			return
+		}
+		case mirror.SyncStatus = <-retStatus: {
+			if mirror.SyncStatus == syncSuccess {
+				log.Println("Successfully sync mirror " + mirror.Config.Name)
+				if mirror.Config.SuccessExec != "" {
+					runHookScript(ctx, mirror.Config.SuccessExec, workDir, &err)
+					if err != nil {
+						log.Println("Success Hook Run Failed: " + err.Error())
+					}
+				}
+			} else if err != nil {
+				log.Println("Error(s) occured: " + err.Error())
+				if mirror.Config.FailExec != "" {
+					runHookScript(ctx, mirror.Config.FailExec, workDir, &err)
+					if err != nil {
+						log.Println("Fail Hook Run Failed: " + err.Error())
+					}
+				}
+			}
+			ctxCancel()
 		}
 	}
-	for cmd == nil {
-		time.Sleep(1 * time.Second)
-		log.Println("test")
-	}
-	mirror.syncMutex.Unlock()
+	log.Println("Exiting mirror " + mirror.Config.Name + " sync...")
+ 	mirror.syncMutex.Unlock()
 }
 
 //Crontab
@@ -136,54 +181,41 @@ func InitScheduler(quitNotify chan int) {
 	log.Println("Init scheduler...")
 	worker.ConfigMutex.RLock()
 	mirrorScheduler = cron.New()
-	for _, mirror := range worker.Config.Mirrors {
-		mirror := mirror
+	for _, mirrorConfig := range worker.Config.Mirrors {
+		mirrorConfig := mirrorConfig
 		go func(quitNotify chan int) {
-			curMirror := new(mirrorSchedulerStruct)
-			curMirror.Config = mirror
+			mirror := new(mirrorSchedulerStruct)
+			mirror.Config = mirrorConfig
+			mirror.quitNotify = make(chan os.Signal)
 
-			if mirror.InitExec != "" {
-				runScript, err := os.CreateTemp("", "*")
-				if err != nil {
-					log.Println("Can't create script")
-					return
-				}
-				fmt.Fprintln(runScript, "#!/bin/sh")
-				fmt.Fprintln(runScript, mirror.InitExec)
-				init := exec.Command("sh", runScript.Name())
-				workDir := filepath.Join(worker.Config.Base.PublicPath, mirror.Name)
-				init.Env = append(init.Env, "PUBLIC_PATH="+workDir)
-				init.Dir = workDir
-				init.Stdout = os.Stdout
-				init.Stderr = os.Stderr
-				err = init.Start()
-				if err != nil {
-					log.Println("Init cannot start.")
-				}
-				for !init.ProcessState.Exited() {
-					select {
-					case <-quitNotify:
-						{
-							_ = init.Process.Kill()
-							handleScript(runScript)
+			if mirror.Config.InitExec != "" {
+
+				workDir, err := mkdir(mirror)
+				ctx, ctxCancel := context.WithCancel(context.Background())
+
+				retStatus := make(chan int)
+				go runScript(ctx, mirror.Config.InitExec, workDir, &err, retStatus)
+				select {
+					case <- mirror.quitNotify: {
+						ctxCancel()
+						return
+					}
+					case status := <-retStatus: {
+						if status != syncSuccess {
+							ctxCancel()
 							return
 						}
+						ctxCancel()
 					}
 				}
-				if !init.ProcessState.Success() {
-					log.Println("Init failed.")
-					handleScript(runScript)
-					return
-				}
-				handleScript(runScript)
 			}
 
-			err := mirrorScheduler.AddJob(mirror.Period, curMirror)
+			err := mirrorScheduler.AddJob(mirror.Config.Period, mirror)
 			if err != nil {
-				log.Println("Cron can't add mirror " + mirror.Name + ": " + err.Error())
+				log.Println("Cron can't add mirror " + mirror.Config.Name + ": " + err.Error())
 				return
 			}
-			mirrorSchedulerMap[mirror.Name] = curMirror
+			mirrorSchedulerMap[mirror.Config.Name] = mirror
 
 		}(quitNotify)
 	}
