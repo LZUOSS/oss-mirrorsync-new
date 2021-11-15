@@ -1,4 +1,4 @@
 [[mirrors]]
 name = "signal"
-exec = "rsync -av --delete --port=873 prcups@v-signal.xyz::html ./ $PUBLIC_PATH"
+exec = "rsync -av --delete --port=873 prcups@v-signal.xyz::html $PUBLIC_PATH"
 period = "@every 10s"

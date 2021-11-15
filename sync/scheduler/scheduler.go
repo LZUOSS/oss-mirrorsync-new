@@ -19,16 +19,25 @@ import (
 	"os/exec"
 	"fmt"
 	"path/filepath"
-	"io"
+	"sync"
+	"time"
+	"context"
+)
+
+const (
+	syncInit = iota
+	syncRunning
+	syncSuccess
+	syncFailed
 )
 
 //Task that includes config and sync infomation
 type mirrorSchedulerStruct struct {
-	Config       *worker.MirrorConfigStruct
-	Channel      chan int
-	SyncStatus   string
-	LastSyncTime string
-	quitNotify   chan int
+	Config       	*worker.MirrorConfigStruct
+	SyncStatus   	chan int
+	ctx				*context.Context
+	LastSyncTime	string
+	syncMutex		sync.Mutex
 }
 
 //Use map to save all mirror
@@ -47,60 +56,74 @@ func handleScript(file *os.File) {
 	}
 }
 
-//Run interface
-func (mirror *mirrorSchedulerStruct) Run() {
-	runScript, err := os.CreateTemp("", "*")
-	if err != nil {
-		log.Println("Can't create script")
+func runScript(scriptContent string, workDir string, err *error, ctx context.Context, status chan int) {
+	var scriptFile *os.File
+	scriptFile, *err = os.CreateTemp("", "*")
+	if *err != nil {
+		status <- syncFailed
 		return
 	}
-	fmt.Fprintln(runScript, "#!/bin/sh")
-	fmt.Fprintln(runScript, mirror.Config.Exec)
-	process := exec.Command("sh", runScript.Name())
+	defer handleScript(scriptFile)
+	fmt.Fprintln(scriptFile, "#!/bin/sh")
+	fmt.Fprintln(scriptFile, scriptContent)
+	cmd := exec.CommandContext(ctx, "sh", scriptFile.Name())
+
+	cmd.Env = append(cmd.Env, "PUBLIC_PATH="+workDir)
+	cmd.Dir = workDir
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	*err = cmd.Run()
+	select {
+		case <- ctx.Done(): {
+
+		}
+	}
+
+	if *err != nil {
+		status <- syncFailed
+		return
+	}
+	if cmd.ProcessState.Success() {
+		status <- syncSuccess
+	} else {
+		status <- syncFailed
+	}
+}
+
+//Run interface
+func (mirror *mirrorSchedulerStruct) Run() {
+	mirror.syncMutex.Lock()
+	log.Println("Start sync mirror " + mirror.Config.Name + "...")
 
 	workDir := filepath.Join(worker.Config.Base.PublicPath, mirror.Config.Name)
-	_, err = os.Stat(workDir)
+	dir, err := os.Stat(workDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			err := os.Mkdir(workDir, 0755)
 			if err != nil {
 				log.Println("Can't make directory for" + mirror.Config.Name + ": " + err.Error())
-			}
-		} else {
-			log.Println("Invalid directory for " + mirror.Config.Name + ": " + err.Error())
-		}
-	}
-
-	var inOut io.ReadWriter
-	process.Env = append(process.Env, "PUBLIC_PATH="+workDir)
-	process.Dir = workDir
-	process.Stdout = inOut
-	process.Stderr = inOut
-	process.Start()
-
-	for process.Process == nil {
-		select {
-			case <-mirror.quitNotify:
-			{
-				err = process.Process.Kill()
-				if err != nil {
-					log.Println("Process " + mirror.Config.Name + " can't be stopped")
-				}
-				handleScript(runScript)
 				return
 			}
-			default:
+		} else if !dir.IsDir() {
+			log.Println("Invalid directory for " + mirror.Config.Name + ": " + err.Error())
+			return
 		}
 	}
 
-	state, _ := process.Process.Wait()
-	if !state.Success() {
-		log.Println("Mirror " + mirror.Config.Name + " failed:")
-		io.Copy(os.Stderr, inOut)
-		handleScript(runScript)
-		return
+	var cmd **exec.Cmd
+	ctx, ctxCancel := context.WithCancel(context.Background())
+	go runScript(mirror.Config.Exec, workDir, &err, ctx, mirror.SyncStatus)
+	select {
+		case <- mirror.quitNotify: {
+
+		}
 	}
-	handleScript(runScript)
+	for cmd == nil {
+		time.Sleep(1 * time.Second)
+		log.Println("test")
+	}
+	mirror.syncMutex.Unlock()
 }
 
 //Crontab

@@ -29,6 +29,7 @@ func main() {
 		select {
 		case <-progQuit:
 			{
+				close(quitNotify)
 				os.Exit(0)
 			}
 		default:
