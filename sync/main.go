@@ -21,19 +21,17 @@ import (
 
 func main() {
 	progQuit := make(chan os.Signal)
-	quitNotify := make(chan int)
 	worker.LoadConfig()
-	scheduler.InitScheduler(quitNotify)
+	scheduler.InitScheduler()
 	for {
 		signal.Notify(progQuit, syscall.SIGINT, syscall.SIGTERM)
 		select {
 		case <-progQuit:
 			{
-				close(quitNotify)
+				scheduler.StopAllSync()
 				os.Exit(0)
 			}
 		default:
-
 		}
 	}
 }

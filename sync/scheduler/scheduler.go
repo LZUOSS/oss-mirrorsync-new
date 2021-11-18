@@ -13,15 +13,14 @@ package scheduler
 
 import (
 	"ChimataMS/worker"
-	"sync"
-	"github.com/robfig/cron"
+	"context"
+	"errors"
+	"fmt"
+	"github.com/robfig/cron/v3"
 	"log"
 	"os"
 	"os/exec"
-	"fmt"
 	"path/filepath"
-	"context"
-	"errors"
 )
 
 const (
@@ -33,11 +32,11 @@ const (
 
 //Task that includes config and sync infomation
 type mirrorSchedulerStruct struct {
-	Config       	*worker.MirrorConfigStruct
-	quitNotify		chan os.Signal
-	SyncStatus   	int
-	LastSyncTime	string
-	syncMutex		sync.Mutex
+	Config       *worker.MirrorConfigStruct
+	quitNotify   chan os.Signal
+	SyncStatus   int
+	LastSyncTime string
+	EntryID      cron.EntryID
 }
 
 //Use map to save all mirror
@@ -77,10 +76,12 @@ func runScript(ctx context.Context, scriptContent string, workDir string, err *e
 
 	*err = cmd.Run()
 	select {
-		case <- ctx.Done(): {
+	case <-ctx.Done():
+		{
 			return
 		}
-		default: {
+	default:
+		{
 			if *err != nil {
 				status <- syncFailed
 				return
@@ -131,7 +132,7 @@ func mkdir(mirror *mirrorSchedulerStruct) (string, error) {
 
 //Run interface
 func (mirror *mirrorSchedulerStruct) Run() {
-	mirror.syncMutex.Lock()
+	worker.ConfigMutex.RLock()
 	log.Println("Start sync mirror " + mirror.Config.Name + "...")
 
 	workDir, err := mkdir(mirror)
@@ -141,12 +142,14 @@ func (mirror *mirrorSchedulerStruct) Run() {
 	go runScript(ctx, mirror.Config.Exec, workDir, &err, retStatus)
 
 	select {
-		case <- mirror.quitNotify: {
+	case <-mirror.quitNotify:
+		{
 			ctxCancel()
 			log.Println("Stopping mirror " + mirror.Config.Name + " sync...")
 			return
 		}
-		case mirror.SyncStatus = <-retStatus: {
+	case mirror.SyncStatus = <-retStatus:
+		{
 			if mirror.SyncStatus == syncSuccess {
 				log.Println("Successfully sync mirror " + mirror.Config.Name)
 				if mirror.Config.SuccessExec != "" {
@@ -168,7 +171,7 @@ func (mirror *mirrorSchedulerStruct) Run() {
 		}
 	}
 	log.Println("Exiting mirror " + mirror.Config.Name + " sync...")
- 	mirror.syncMutex.Unlock()
+	worker.ConfigMutex.RUnlock()
 }
 
 //Crontab
@@ -177,13 +180,15 @@ var (
 )
 
 //Initialize the scheduler
-func InitScheduler(quitNotify chan int) {
+func InitScheduler() {
 	log.Println("Init scheduler...")
 	worker.ConfigMutex.RLock()
-	mirrorScheduler = cron.New()
+	mirrorScheduler = cron.New(cron.WithChain(
+		cron.SkipIfStillRunning(cron.DefaultLogger),
+	))
 	for _, mirrorConfig := range worker.Config.Mirrors {
 		mirrorConfig := mirrorConfig
-		go func(quitNotify chan int) {
+		go func() {
 			mirror := new(mirrorSchedulerStruct)
 			mirror.Config = mirrorConfig
 			mirror.quitNotify = make(chan os.Signal)
@@ -196,11 +201,13 @@ func InitScheduler(quitNotify chan int) {
 				retStatus := make(chan int)
 				go runScript(ctx, mirror.Config.InitExec, workDir, &err, retStatus)
 				select {
-					case <- mirror.quitNotify: {
+				case <-mirror.quitNotify:
+					{
 						ctxCancel()
 						return
 					}
-					case status := <-retStatus: {
+				case status := <-retStatus:
+					{
 						if status != syncSuccess {
 							ctxCancel()
 							return
@@ -210,16 +217,23 @@ func InitScheduler(quitNotify chan int) {
 				}
 			}
 
-			err := mirrorScheduler.AddJob(mirror.Config.Period, mirror)
+			var err error
+			mirror.EntryID, err = mirrorScheduler.AddJob(mirror.Config.Period, mirror)
 			if err != nil {
 				log.Println("Cron can't add mirror " + mirror.Config.Name + ": " + err.Error())
 				return
 			}
 			mirrorSchedulerMap[mirror.Config.Name] = mirror
 
-		}(quitNotify)
+		}()
 	}
 
 	worker.ConfigMutex.RUnlock()
 	mirrorScheduler.Run()
+}
+
+func StopAllSync() {
+	for _, mirror := range mirrorSchedulerMap {
+		close(mirror.quitNotify)
+	}
 }
