@@ -12,112 +12,43 @@
 package scheduler
 
 import (
+	"ChimataMS/tools"
 	"ChimataMS/worker"
-	"context"
-	"errors"
-	"fmt"
-	"github.com/pelletier/go-toml/v2"
+	"encoding/json"
 	"github.com/robfig/cron/v3"
 	"io/ioutil"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"sync"
 	"time"
 )
 
 const (
-	syncInit = iota
+	syncNotPrepared = iota
 	syncSyncing
-	syncSuccess
+	syncSucceed
 	syncFailed
 )
 
 //Task that includes config and sync infomation
-type mirrorSchedulerStruct struct {
-	Config         *worker.MirrorConfigStruct
-	quitNotify     chan os.Signal
-	SyncStatus     int    `toml:sync_status`
-	LastChangeTime string `toml:last_change_time`
-	EntryID        cron.EntryID
+type schedulerStruct struct {
+	Config         worker.MirrorConfigStruct `json:"-"`
+	quitNotify     chan struct{}
+	SyncStatus     int    `json:"sync_status"`
+	LastChangeTime string `json:"last_change_time"`
+	//Log            string       `json:"log"`
+	EntryID   cron.EntryID `json:"-"`
+	IsDeleted bool         `json:"-"`
 }
 
 //Use map to save all mirror
 var (
-	mirrorSchedulerMap = make(map[string]*mirrorSchedulerStruct)
+	mirrorMap = make(map[string]*schedulerStruct)
+	mapMutex  sync.RWMutex
 )
 
-func handleScript(file *os.File) {
-	err := file.Close()
-	if err != nil {
-		log.Println("File " + file.Name() + " can't be closed: " + err.Error())
-	}
-	err = os.Remove(file.Name())
-	if err != nil {
-		log.Println("File " + file.Name() + " can't be removed " + err.Error())
-	}
-}
-
-func runScript(ctx context.Context, scriptContent *string, workDir *string, err *error, status chan int) {
-	var scriptFile *os.File
-	scriptFile, *err = os.CreateTemp("", "*")
-	if *err != nil {
-		status <- syncFailed
-		err2 := scriptFile.Close()
-		*err = errors.New((*err).Error() + "\n" + err2.Error())
-		return
-	}
-	defer handleScript(scriptFile)
-	fmt.Fprintln(scriptFile, "#!/bin/sh")
-	fmt.Fprintln(scriptFile, *scriptContent)
-	cmd := exec.CommandContext(ctx, "sh", scriptFile.Name())
-
-	cmd.Env = append(cmd.Env, "PUBLIC_PATH="+*workDir)
-	cmd.Dir = *workDir
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	*err = cmd.Run()
-	select {
-	case <-ctx.Done():
-		{
-			return
-		}
-	default:
-		{
-			if *err != nil {
-				status <- syncFailed
-				return
-			}
-			if cmd.ProcessState.Success() {
-				status <- syncSuccess
-			} else {
-				status <- syncFailed
-			}
-		}
-	}
-}
-
-func runHookScript(ctx context.Context, scriptContent *string, workDir *string, err *error) {
-	var scriptFile *os.File
-	scriptFile, *err = os.CreateTemp("", "*")
-	if *err != nil {
-		return
-	}
-	defer handleScript(scriptFile)
-	fmt.Fprintln(scriptFile, "#!/bin/sh")
-	fmt.Fprintln(scriptFile, *scriptContent)
-	cmd := exec.CommandContext(ctx, "sh", scriptFile.Name())
-
-	cmd.Env = append(cmd.Env, "PUBLIC_PATH="+*workDir)
-	cmd.Dir = *workDir
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	*err = cmd.Run()
-}
-
-func (mirror *mirrorSchedulerStruct) mkdir() (string, error) {
+func (mirror *schedulerStruct) mkdir() (string, error) {
 	workDir := filepath.Join(worker.Config.Base.PublicPath, mirror.Config.Name)
 	dir, err := os.Stat(workDir)
 	if err != nil {
@@ -133,12 +64,12 @@ func (mirror *mirrorSchedulerStruct) mkdir() (string, error) {
 	return workDir, nil
 }
 
-func (mirror *mirrorSchedulerStruct) updateStatus(status int) {
+func (mirror *schedulerStruct) updateStatus(status int) {
 	mirror.SyncStatus = status
 	mirror.LastChangeTime = time.Now().String()
-	mirrorStatusToml, _ := toml.Marshal(mirror)
-	err := ioutil.WriteFile(filepath.Join(worker.Config.Base.RecordPath, mirror.Config.Name+".toml"),
-		mirrorStatusToml,
+	mirrorStatusContext, _ := json.Marshal(mirror)
+	err := ioutil.WriteFile(filepath.Join(worker.Config.Base.RecordPath, mirror.Config.Name+".json"),
+		mirrorStatusContext,
 		0755)
 	if err != nil {
 		log.Println(err)
@@ -146,112 +77,87 @@ func (mirror *mirrorSchedulerStruct) updateStatus(status int) {
 }
 
 //Run interface
-func (mirror *mirrorSchedulerStruct) Run() {
-	worker.ConfigMutex.RLock()
+func (mirror *schedulerStruct) Run() {
 	log.Println("Start sync mirror " + mirror.Config.Name + "...")
 	go mirror.updateStatus(syncSyncing)
 
 	workDir, err := mirror.mkdir()
-	ctx, ctxCancel := context.WithCancel(context.Background())
 
-	retStatus := make(chan int)
-	go runScript(ctx, &mirror.Config.Exec, &workDir, &err, retStatus)
-
-	select {
-	case <-mirror.quitNotify:
-		{
-			ctxCancel()
-			log.Println("Stopping mirror " + mirror.Config.Name + " sync...")
-			return
-		}
-	case mirror.SyncStatus = <-retStatus:
-		{
-			if mirror.SyncStatus == syncSuccess {
-				go mirror.updateStatus(syncSuccess)
-				log.Println("Successfully sync mirror " + mirror.Config.Name)
-				if mirror.Config.SuccessExec != "" {
-					runHookScript(ctx, &mirror.Config.SuccessExec, &workDir, &err)
-					if err != nil {
-						log.Println("Success Hook Run Failed: " + err.Error())
-					}
-				}
-			} else if err != nil {
-				go mirror.updateStatus(syncFailed)
-				log.Println("Error(s) occured: " + err.Error())
-				if mirror.Config.FailExec != "" {
-					runHookScript(ctx, &mirror.Config.FailExec, &workDir, &err)
-					if err != nil {
-						log.Println("Fail Hook Run Failed: " + err.Error())
-					}
-				}
+	go tools.PromiseScript(mirror.quitNotify, &mirror.Config.Exec, &workDir, &err, func() {
+		go mirror.updateStatus(syncSucceed)
+		log.Println("Successfully sync mirror " + mirror.Config.Name)
+		if mirror.Config.SuccessExec != "" {
+			tools.PromiseScript(mirror.quitNotify, &mirror.Config.SuccessExec, &workDir, &err, func() {}, func() {})
+			if err != nil {
+				log.Println("Success Hook Run Failed: " + err.Error())
 			}
-			ctxCancel()
 		}
+	}, func() {
+		go mirror.updateStatus(syncFailed)
+		log.Println("Failed to sync mirror " + mirror.Config.Name + ".")
+		if mirror.Config.FailExec != "" {
+			tools.PromiseScript(mirror.quitNotify, &mirror.Config.FailExec, &workDir, &err, func() {}, func() {})
+			if err != nil {
+				log.Println("Fail Hook Run Failed: " + err.Error())
+			}
+		}
+	})
+	if err != nil {
+		log.Println("Sync mirror " + mirror.Config.Name + " Failed: " + err.Error())
 	}
-	log.Println("Exiting mirror " + mirror.Config.Name + " sync...")
-	worker.ConfigMutex.RUnlock()
 }
 
 //Crontab
 var (
-	mirrorScheduler *cron.Cron
+	mirrorCron *cron.Cron
 )
 
 //Initialize the scheduler
 func InitScheduler() {
 	log.Println("Init scheduler...")
-	worker.ConfigMutex.RLock()
-	mirrorScheduler = cron.New(cron.WithChain(
+	mirrorCron = cron.New(cron.WithChain(
 		cron.SkipIfStillRunning(cron.DefaultLogger),
 	))
+	worker.ConfigMutex.RLock()
 	for _, mirrorConfig := range worker.Config.Mirrors {
 		mirrorConfig := mirrorConfig
 		go func() {
-			mirror := new(mirrorSchedulerStruct)
+			mirror := new(schedulerStruct)
 			mirror.Config = mirrorConfig
-			mirror.quitNotify = make(chan os.Signal)
-			go mirror.updateStatus(syncInit)
+			mirror.quitNotify = make(chan struct{})
+			go mirror.updateStatus(syncNotPrepared)
 			if mirror.Config.InitExec != "" {
-
 				workDir, err := mirror.mkdir()
-				ctx, ctxCancel := context.WithCancel(context.Background())
 
-				retStatus := make(chan int)
-				go runScript(ctx, &mirror.Config.InitExec, &workDir, &err, retStatus)
-				select {
-				case <-mirror.quitNotify:
-					{
-						ctxCancel()
-						return
-					}
-				case status := <-retStatus:
-					{
-						if status != syncSuccess {
-							ctxCancel()
-							return
-						}
-						ctxCancel()
-					}
+				go tools.PromiseScript(mirror.quitNotify, &mirror.Config.InitExec, &workDir, &err, func() {
+					log.Println("Initializing mirror " + mirror.Config.Name + " Successfully Ended")
+				}, func() {})
+				if err != nil {
+					log.Println("Initializing mirror " + mirror.Config.Name + " Failed: " + err.Error())
 				}
 			}
-
 			var err error
-			mirror.EntryID, err = mirrorScheduler.AddJob(mirror.Config.Period, mirror)
+			mirror.EntryID, err = mirrorCron.AddJob(mirror.Config.Period, mirror)
 			if err != nil {
 				log.Println("Cron can't add mirror " + mirror.Config.Name + ": " + err.Error())
 				return
 			}
-			mirrorSchedulerMap[mirror.Config.Name] = mirror
-
+			mapMutex.Lock()
+			mirrorMap[mirrorConfig.Name] = mirror
+			mapMutex.Unlock()
 		}()
 	}
 
 	worker.ConfigMutex.RUnlock()
-	mirrorScheduler.Run()
+	mirrorCron.Start()
 }
 
-func StopAllSync() {
-	for _, mirror := range mirrorSchedulerMap {
+func StopScheduler() {
+	mapMutex.RLock()
+	for _, mirror := range mirrorMap {
 		close(mirror.quitNotify)
 	}
+	mapMutex.RUnlock()
+	ctx := mirrorCron.Stop()
+	<-ctx.Done()
 }

@@ -13,7 +13,7 @@ package worker
 
 import (
 	"errors"
-	"github.com/pelletier/go-toml/v2"
+	"github.com/pelletier/go-toml"
 	"io/ioutil"
 	"log"
 	"os"
@@ -41,8 +41,8 @@ type BaseConfigStruct struct {
 
 //Config include the two above
 type ConfigStruct struct {
-	Base    *BaseConfigStruct     `toml:"base"`
-	Mirrors []*MirrorConfigStruct `toml:"mirrors"`
+	Base    *BaseConfigStruct    `toml:"base"`
+	Mirrors []MirrorConfigStruct `toml:"mirrors"`
 }
 
 //Config Mutex and config Struct

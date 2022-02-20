@@ -20,18 +20,12 @@ import (
 )
 
 func main() {
+
 	progQuit := make(chan os.Signal)
 	worker.LoadConfig()
 	scheduler.InitScheduler()
-	for {
-		signal.Notify(progQuit, syscall.SIGINT, syscall.SIGTERM)
-		select {
-		case <-progQuit:
-			{
-				scheduler.StopAllSync()
-				os.Exit(0)
-			}
-		default:
-		}
-	}
+	signal.Notify(progQuit, syscall.SIGINT, syscall.SIGTERM)
+	<-progQuit
+	scheduler.StopScheduler()
+	os.Exit(0)
 }
