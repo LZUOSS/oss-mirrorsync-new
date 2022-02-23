@@ -13,7 +13,7 @@ package worker
 
 import (
 	"errors"
-	"github.com/pelletier/go-toml/v2"
+	"github.com/pelletier/go-toml"
 	"io/ioutil"
 	"log"
 	"os"
@@ -42,18 +42,20 @@ type BaseConfigStruct struct {
 //Config include the two above
 type ConfigStruct struct {
 	Base    *BaseConfigStruct     `toml:"base"`
-	Mirrors []*MirrorConfigStruct `toml:"mirrors"`
+	Mirrors *[]MirrorConfigStruct `toml:"mirrors"`
 }
 
 //Config Mutex and config Struct
 var (
 	ConfigMutex sync.RWMutex
 	Config      *ConfigStruct
+	ConfigPath  string
 )
 
 //Check if the paths are effective and translate them to absolute path
 func checkConfig() bool {
 	var err error
+	ConfigMutex.RLock()
 	Config.Base.PublicPath, err = filepath.Abs(Config.Base.PublicPath)
 	if err != nil {
 		return false
@@ -72,52 +74,73 @@ func checkConfig() bool {
 		log.Println("The record path is not valid.")
 		return false
 	}
+	ConfigMutex.RUnlock()
 	return true
 }
-
-//Load config from toml files
-func LoadConfig() {
-	ConfigMutex.Lock()
-	log.Println("Initializing...")
-	Config = new(ConfigStruct)
+func LoadBaseConfig() {
 	log.Println("Loading config.toml...")
-	baseConfigContent, err := ioutil.ReadFile("./config.toml")
+
+	ConfigPath = "./config.toml"
+	baseConfigContent, err := ioutil.ReadFile(ConfigPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			baseConfigContent, err = ioutil.ReadFile("/etc/chimata/config.toml")
+			ConfigPath = "/etc/chimata/config.toml"
+			baseConfigContent, err = ioutil.ReadFile(ConfigPath)
 			if err != nil {
-				log.Fatal(err)
+				log.Fatalln(err)
 			}
 		} else {
-			log.Fatal(err)
+			log.Fatalln(err)
 		}
 	}
 	log.Println("Unmarshalling config.toml...")
+	ConfigMutex.Lock()
+	Config.Base = new(BaseConfigStruct)
 	err = toml.Unmarshal(baseConfigContent, Config)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalln(err)
 	}
+	ConfigMutex.Unlock()
 	if checkConfig() == false {
-		log.Fatal("The config file has error(s).")
+		log.Fatalln("The config file has error(s).")
 	}
+}
+
+func LoadMirrorConfig() {
 	log.Println("Loading mirrors...")
+	ConfigMutex.Lock()
+	Config.Mirrors = new([]MirrorConfigStruct)
+	ConfigMutex.Unlock()
 	mirrorsConfigFile, err := ioutil.ReadDir(Config.Base.MirrorConfigPath)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalln(err)
 	}
 	for _, oneMirrorConfigFile := range mirrorsConfigFile {
 		if len(oneMirrorConfigFile.Name()) > 5 && oneMirrorConfigFile.Name()[len(oneMirrorConfigFile.Name())-5:] == ".toml" {
 			log.Println("Loading " + oneMirrorConfigFile.Name() + "...")
 			oneMirrorConfigContent, err := ioutil.ReadFile(filepath.Join(Config.Base.MirrorConfigPath, oneMirrorConfigFile.Name()))
 			if err != nil {
-				log.Fatal(err)
+				log.Fatalln(err)
 			}
 			log.Println("Unmarshalling " + oneMirrorConfigFile.Name() + "...")
+			ConfigMutex.Lock()
 			err = toml.Unmarshal(oneMirrorConfigContent, Config)
 			if err != nil {
-				log.Fatal(err)
+				log.Fatalln(err)
 			}
+			ConfigMutex.Unlock()
 		}
 	}
+}
+
+//Load config from toml files
+func InitializeConfig() {
+
+	log.Println("Initializing...")
+	ConfigMutex.Lock()
+	Config = new(ConfigStruct)
 	ConfigMutex.Unlock()
+
+	LoadBaseConfig()
+	LoadMirrorConfig()
 }
