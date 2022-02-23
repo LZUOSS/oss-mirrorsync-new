@@ -38,14 +38,15 @@ type schedulerStruct struct {
 	SyncStatus     int    `json:"sync_status"`
 	LastChangeTime string `json:"last_change_time"`
 	//Log            string       `json:"log"`
-	EntryID   cron.EntryID `json:"-"`
-	IsDeleted bool         `json:"-"`
+	EntryID cron.EntryID `json:"-"`
+	Exist   bool         `json:"-"`
 }
 
 //Use map to save all mirror
 var (
-	mirrorMap = make(map[string]*schedulerStruct)
-	mapMutex  sync.RWMutex
+	mirrorMap  = make(map[string]*schedulerStruct)
+	mapMutex   sync.RWMutex
+	mirrorCron *cron.Cron
 )
 
 func (mirror *schedulerStruct) mkdir() (string, error) {
@@ -107,10 +108,31 @@ func (mirror *schedulerStruct) Run() {
 	}
 }
 
-//Crontab
-var (
-	mirrorCron *cron.Cron
-)
+func addJob(mirrorConfig worker.MirrorConfigStruct) {
+	mirror := new(schedulerStruct)
+	mirror.Config = mirrorConfig
+	mirror.quitNotify = make(chan struct{})
+	go mirror.updateStatus(syncNotPrepared)
+	if mirror.Config.InitExec != "" {
+		workDir, err := mirror.mkdir()
+
+		go tools.PromiseScript(mirror.quitNotify, &mirror.Config.InitExec, &workDir, &err, func() {
+			log.Println("Initializing mirror " + mirror.Config.Name + " Successfully Ended")
+		}, func() {})
+		if err != nil {
+			log.Println("Initializing mirror " + mirror.Config.Name + " Failed: " + err.Error())
+		}
+	}
+	var err error
+	mirror.EntryID, err = mirrorCron.AddJob(mirror.Config.Period, mirror)
+	if err != nil {
+		log.Println("Cron can't add mirror " + mirror.Config.Name + ": " + err.Error())
+		return
+	}
+	mapMutex.Lock()
+	mirrorMap[mirrorConfig.Name] = mirror
+	mapMutex.Unlock()
+}
 
 //Initialize the scheduler
 func InitScheduler() {
@@ -119,33 +141,8 @@ func InitScheduler() {
 		cron.SkipIfStillRunning(cron.DefaultLogger),
 	))
 	worker.ConfigMutex.RLock()
-	for _, mirrorConfig := range worker.Config.Mirrors {
-		mirrorConfig := mirrorConfig
-		go func() {
-			mirror := new(schedulerStruct)
-			mirror.Config = mirrorConfig
-			mirror.quitNotify = make(chan struct{})
-			go mirror.updateStatus(syncNotPrepared)
-			if mirror.Config.InitExec != "" {
-				workDir, err := mirror.mkdir()
-
-				go tools.PromiseScript(mirror.quitNotify, &mirror.Config.InitExec, &workDir, &err, func() {
-					log.Println("Initializing mirror " + mirror.Config.Name + " Successfully Ended")
-				}, func() {})
-				if err != nil {
-					log.Println("Initializing mirror " + mirror.Config.Name + " Failed: " + err.Error())
-				}
-			}
-			var err error
-			mirror.EntryID, err = mirrorCron.AddJob(mirror.Config.Period, mirror)
-			if err != nil {
-				log.Println("Cron can't add mirror " + mirror.Config.Name + ": " + err.Error())
-				return
-			}
-			mapMutex.Lock()
-			mirrorMap[mirrorConfig.Name] = mirror
-			mapMutex.Unlock()
-		}()
+	for _, mirrorConfig := range *worker.Config.Mirrors {
+		go addJob(mirrorConfig)
 	}
 
 	worker.ConfigMutex.RUnlock()
@@ -160,4 +157,35 @@ func StopScheduler() {
 	mapMutex.RUnlock()
 	ctx := mirrorCron.Stop()
 	<-ctx.Done()
+}
+
+func UpdateScheduler() {
+	worker.ConfigMutex.RLock()
+
+	for _, mirror := range *worker.Config.Mirrors {
+		if mirrorSch, ok := mirrorMap[mirror.Name]; ok {
+			mirrorSch.Config = mirror
+			mirrorSch.Exist = true
+		} else {
+			addJob(mirror)
+			mirrorMap[mirror.Name].Exist = true
+		}
+	}
+
+	worker.ConfigMutex.RUnlock()
+
+	deleteQueue := make([]string, 0)
+	for _, mirror := range mirrorMap {
+		if mirror.Exist {
+			mirror.Exist = false
+		} else {
+			close(mirror.quitNotify)
+			mirrorCron.Remove(mirror.EntryID)
+			deleteQueue = append(deleteQueue, mirror.Config.Name)
+		}
+	}
+
+	for _, mirrorToDelete := range deleteQueue {
+		delete(mirrorMap, mirrorToDelete)
+	}
 }

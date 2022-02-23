@@ -64,9 +64,6 @@ func PromiseScript(quitNotify chan struct{}, scriptContent *string, workDir *str
 		return
 	}
 	select {
-	case <-quitNotify:
-		{
-		}
 	case success := <-getProcessStatus(cmd):
 		{
 			if success {
@@ -75,6 +72,7 @@ func PromiseScript(quitNotify chan struct{}, scriptContent *string, workDir *str
 				failureHook()
 			}
 		}
+	case <-quitNotify:
 	}
 	cancelFunc()
 }

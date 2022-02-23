@@ -11,3 +11,47 @@
 */
 package updater
 
+import (
+	"github.com/fsnotify/fsnotify"
+	"log"
+)
+
+var (
+	mirrorWatcher *fsnotify.Watcher
+	baseWatcher   *fsnotify.Watcher
+)
+
+//Initialize Updater
+func InitMirrorUpdater(workDir string) (chan fsnotify.Event, chan error) {
+	var err error
+	mirrorWatcher, err = fsnotify.NewWatcher()
+	if err != nil {
+		log.Fatalln("Failed to initialize mirrorWatcher: " + err.Error())
+	}
+	err = mirrorWatcher.Add(workDir)
+	if err != nil {
+		log.Fatalln("Failed to add workDir to mirrorWatcher")
+	}
+	return mirrorWatcher.Events, mirrorWatcher.Errors
+}
+
+func CloseMirrorUpdater() {
+	_ = mirrorWatcher.Close()
+}
+
+func InitBaseUpdater(configPath string) (chan fsnotify.Event, chan error) {
+	var err error
+	baseWatcher, err = fsnotify.NewWatcher()
+	if err != nil {
+		log.Fatalln("Failed to initialize baseWatcher: " + err.Error())
+	}
+	err = baseWatcher.Add(configPath)
+	if err != nil {
+		log.Fatalln("Failed to add configPath to baseWatcher")
+	}
+	return baseWatcher.Events, baseWatcher.Errors
+}
+
+func CloseBaseUpdater() {
+	_ = baseWatcher.Close()
+}

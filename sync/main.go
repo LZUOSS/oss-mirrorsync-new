@@ -13,7 +13,9 @@ package main
 
 import (
 	"ChimataMS/scheduler"
+	"ChimataMS/updater"
 	"ChimataMS/worker"
+	"log"
 	"os"
 	"os/signal"
 	"syscall"
@@ -22,10 +24,38 @@ import (
 func main() {
 
 	progQuit := make(chan os.Signal)
-	worker.LoadConfig()
+	worker.InitializeConfig()
 	scheduler.InitScheduler()
+	mirrorsEvent, mirrorsError := updater.InitMirrorUpdater(worker.Config.Base.MirrorConfigPath)
+	baseEvent, baseError := updater.InitBaseUpdater(worker.ConfigPath)
 	signal.Notify(progQuit, syscall.SIGINT, syscall.SIGTERM)
-	<-progQuit
-	scheduler.StopScheduler()
-	os.Exit(0)
+	for {
+		select {
+		case <-progQuit:
+			{
+				scheduler.StopScheduler()
+				updater.CloseMirrorUpdater()
+				updater.CloseBaseUpdater()
+				os.Exit(0)
+			}
+		case <-mirrorsEvent:
+			{
+				worker.LoadMirrorConfig()
+				scheduler.UpdateScheduler()
+			}
+		case err := <-mirrorsError:
+			{
+				log.Fatalln("mirrorWatcher Error: " + err.Error())
+			}
+		case <-baseEvent:
+			{
+				worker.LoadBaseConfig()
+			}
+		case err := <-baseError:
+			{
+				log.Fatalln("baseWatcher Error: " + err.Error())
+			}
+		}
+	}
+
 }
