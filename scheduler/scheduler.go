@@ -161,20 +161,24 @@ func StopScheduler() {
 
 func UpdateScheduler() {
 	worker.ConfigMutex.RLock()
-
+	mapMutex.Lock()
 	for _, mirror := range *worker.Config.Mirrors {
 		if mirrorSch, ok := mirrorMap[mirror.Name]; ok {
 			mirrorSch.Config = mirror
 			mirrorSch.Exist = true
 		} else {
+			mapMutex.Unlock()
 			addJob(mirror)
+			mapMutex.Lock()
 			mirrorMap[mirror.Name].Exist = true
 		}
 	}
 
+	mapMutex.Unlock()
 	worker.ConfigMutex.RUnlock()
 
 	deleteQueue := make([]string, 0)
+	mapMutex.Lock()
 	for _, mirror := range mirrorMap {
 		if mirror.Exist {
 			mirror.Exist = false
@@ -184,8 +188,11 @@ func UpdateScheduler() {
 			deleteQueue = append(deleteQueue, mirror.Config.Name)
 		}
 	}
+	mapMutex.Unlock()
 
 	for _, mirrorToDelete := range deleteQueue {
+		mapMutex.Lock()
 		delete(mirrorMap, mirrorToDelete)
+		mapMutex.Unlock()
 	}
 }
