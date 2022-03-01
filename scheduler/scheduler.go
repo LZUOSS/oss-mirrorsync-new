@@ -82,7 +82,8 @@ func (mirror *schedulerStruct) Run() {
 	log.Println("Start sync mirror " + mirror.Config.Name + "...")
 	go mirror.updateStatus(syncSyncing)
 
-	workDir, err := mirror.mkdir()
+	workDir := filepath.Join(worker.Config.Base.PublicPath, mirror.Config.Name)
+	var err error
 
 	go tools.PromiseScript(mirror.quitNotify, &mirror.Config.Exec, &workDir, &err, func() {
 		go mirror.updateStatus(syncSucceed)
@@ -113,9 +114,13 @@ func addJob(mirrorConfig worker.MirrorConfigStruct) {
 	mirror.Config = mirrorConfig
 	mirror.quitNotify = make(chan struct{})
 	go mirror.updateStatus(syncNotPrepared)
+	var err error
+	workDir, err := mirror.mkdir()
+	if err != nil {
+		log.Println("Can't make directory for mirror " + mirror.Config.Name + err.Error())
+		return
+	}
 	if mirror.Config.InitExec != "" {
-		workDir, err := mirror.mkdir()
-
 		go tools.PromiseScript(mirror.quitNotify, &mirror.Config.InitExec, &workDir, &err, func() {
 			log.Println("Initializing mirror " + mirror.Config.Name + " Successfully Ended")
 		}, func() {})
@@ -123,7 +128,6 @@ func addJob(mirrorConfig worker.MirrorConfigStruct) {
 			log.Println("Initializing mirror " + mirror.Config.Name + " Failed: " + err.Error())
 		}
 	}
-	var err error
 	mirror.EntryID, err = mirrorCron.AddJob(mirror.Config.Period, mirror)
 	if err != nil {
 		log.Println("Cron can't add mirror " + mirror.Config.Name + ": " + err.Error())
