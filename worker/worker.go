@@ -128,7 +128,6 @@ func LoadMirrorConfig() {
 			if err != nil {
 				log.Fatalln(err)
 			}
-			log.Println(Config.Mirrors)
 			ConfigMutex.Unlock()
 		}
 	}

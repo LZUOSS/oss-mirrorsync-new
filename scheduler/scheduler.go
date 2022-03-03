@@ -25,8 +25,7 @@ import (
 )
 
 const (
-	syncNotPrepared = iota
-	syncSyncing
+	syncSyncing = iota
 	syncSucceed
 	syncFailed
 )
@@ -67,7 +66,7 @@ func (mirror *schedulerStruct) mkdir() (string, error) {
 
 func (mirror *schedulerStruct) updateStatus(status int) {
 	mirror.SyncStatus = status
-	mirror.LastChangeTime = time.Now().String()
+	mirror.LastChangeTime = time.Now().Format("2006-01-02 15:01:05")
 	mirrorStatusContext, _ := json.Marshal(mirror)
 	err := ioutil.WriteFile(filepath.Join(worker.Config.Base.RecordPath, mirror.Config.Name+".json"),
 		mirrorStatusContext,
@@ -113,7 +112,7 @@ func addJob(mirrorConfig worker.MirrorConfigStruct) {
 	mirror := new(schedulerStruct)
 	mirror.Config = mirrorConfig
 	mirror.quitNotify = make(chan struct{})
-	go mirror.updateStatus(syncNotPrepared)
+	go mirror.updateStatus(syncSyncing)
 	var err error
 	workDir, err := mirror.mkdir()
 	if err != nil {
@@ -136,6 +135,7 @@ func addJob(mirrorConfig worker.MirrorConfigStruct) {
 	mapMutex.Lock()
 	mirrorMap[mirrorConfig.Name] = mirror
 	mapMutex.Unlock()
+	go mirror.updateStatus(syncSucceed)
 }
 
 //Initialize the scheduler
