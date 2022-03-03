@@ -13,7 +13,7 @@ package worker
 
 import (
 	"errors"
-	"github.com/pelletier/go-toml"
+	"github.com/pelletier/go-toml/v2"
 	"io/ioutil"
 	"log"
 	"os"
@@ -42,7 +42,7 @@ type BaseConfigStruct struct {
 //Config include the two above
 type ConfigStruct struct {
 	Base    *BaseConfigStruct     `toml:"base"`
-	Mirrors *[]MirrorConfigStruct `toml:"mirrors"`
+	Mirrors []*MirrorConfigStruct `toml:"mirrors"`
 }
 
 //Config Mutex and config Struct
@@ -109,7 +109,7 @@ func LoadBaseConfig() {
 func LoadMirrorConfig() {
 	log.Println("Loading mirrors...")
 	ConfigMutex.Lock()
-	Config.Mirrors = new([]MirrorConfigStruct)
+	Config.Mirrors = make([]*MirrorConfigStruct, 0)
 	ConfigMutex.Unlock()
 	mirrorsConfigFile, err := ioutil.ReadDir(Config.Base.MirrorConfigPath)
 	if err != nil {
@@ -128,6 +128,7 @@ func LoadMirrorConfig() {
 			if err != nil {
 				log.Fatalln(err)
 			}
+			log.Println(Config.Mirrors)
 			ConfigMutex.Unlock()
 		}
 	}

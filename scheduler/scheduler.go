@@ -145,8 +145,8 @@ func InitScheduler() {
 		cron.SkipIfStillRunning(cron.DefaultLogger),
 	))
 	worker.ConfigMutex.RLock()
-	for _, mirrorConfig := range *worker.Config.Mirrors {
-		go addJob(mirrorConfig)
+	for _, mirrorConfig := range worker.Config.Mirrors {
+		go addJob(*mirrorConfig)
 	}
 
 	worker.ConfigMutex.RUnlock()
@@ -166,13 +166,13 @@ func StopScheduler() {
 func UpdateScheduler() {
 	worker.ConfigMutex.RLock()
 	mapMutex.Lock()
-	for _, mirror := range *worker.Config.Mirrors {
+	for _, mirror := range worker.Config.Mirrors {
 		if mirrorSch, ok := mirrorMap[mirror.Name]; ok {
-			mirrorSch.Config = mirror
+			mirrorSch.Config = *mirror
 			mirrorSch.Exist = true
 		} else {
 			mapMutex.Unlock()
-			addJob(mirror)
+			addJob(mirrorSch.Config)
 			mapMutex.Lock()
 			mirrorMap[mirror.Name].Exist = true
 		}
