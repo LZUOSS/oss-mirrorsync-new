@@ -24,7 +24,7 @@ type MirrorObject struct {
 
 	SyncStatus   int
 	LastSyncTime string
-	Cancel		context.CancelFunc
+	quitChan	chan struct{}
 }
 
 type DefaultConfig struct {
@@ -61,6 +61,36 @@ func checkWorkDirAndPeriod(workDir string, period string) error {
 		rerr = errors.Join(rerr, periodErr)
 	}
 	return rerr
+}
+
+func doTask(ctx *context.Context, script *string, workDir *string, onSuceeded func(), onFailed func()) {
+	scriptFile, err := os.CreateTemp("", "*")
+	if err != nil {
+		_ = scriptFile.Close()
+		return
+	}
+	defer func(){
+		_ = scriptFile.Close()
+		_ = os.Remove(scriptFile.Name())
+	}
+
+	_, _ = fmt.Fprintln(scriptFile, "#!/bin/sh")
+	_, _ = fmt.Fprintln(scriptFile, *scriptContent)
+
+	cmd := exec.CommandContext(ctx, "sh", scriptFile.Name())
+
+	cmd.Env = append(cmd.Env, "PUBLIC_PATH="+*workDir)
+	cmd.Dir = *workDir
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	err = cmd.Run()
+	if err != nil {
+		failureHook()
+		return
+	}
+	
+	
 }
 
 func LoadWorker() {
@@ -125,6 +155,7 @@ func LoadWorker() {
 					mirror.LogDir = defaultConfig.LogDir
 				}
 				
+				mirror.quitChan = make(chan struct{})
 				mirrorCron.AddJob(mirror)
 			}
 		}
@@ -142,4 +173,17 @@ func (mirror *MirrorObject) updateStatus(status int) {
 func (mirror *MirrorObject) Run() {
 	log.Println("Start sync mirror " + mirror.Name + "...")
 	mirror.updateStatus(syncSyncing)
+	
+	
+}
+
+func (mirror *MirrorObject) Close() {
+	close(mirror.quitChan)
+}
+
+func CloseAll() {
+	mirrorCron.Stop()
+	for _, mirrorEntry := mirrorCron.Entries(); mirror = mirrorEntry.Job.(MirrorObject) {
+		close(mirror.quitChan)
+	}
 }
